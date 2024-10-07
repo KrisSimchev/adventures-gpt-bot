@@ -12,32 +12,20 @@ def create_assistant(client):
             vector_store_id = assistant_data['vector_store_id']
             print("Loaded existing assistant ID.")
     else:
+        vector_store = client.beta.vector_stores.create(name="Knowledge about Adventures.bg")
+        vector_store_id=vector_store.id
 
-        main_page_file = client.files.create(file=open("Main page.docx", "rb"),
-                                        purpose='assistants')
-        FAQ_file = client.files.create(file=open("FAQ.docx", "rb"),
-                                        purpose='assistants')
-        about_us_file = client.files.create(file=open("about us.docx", "rb"),
-                                        purpose='assistants')
-        my_voucher_file = client.files.create(file=open("My voucher.docx", "rb"),
-                                        purpose='assistants')
-        universal_voucher_file = client.files.create(file=open("universal voucher.docx", "rb"),
-                                        purpose='assistants')
+        file_paths = ["Main page.docx", "FAQ.docx", "about us.docx", "My voucher.docx", "universal voucher.docx"]
+        file_streams = [open(path, "rb") for path in file_paths]
 
-        main_page_file_id = main_page_file.id
-        FAQ_file_id = FAQ_file.id
-        about_us_file_id = about_us_file.id
-        my_voucher_file_id = my_voucher_file.id
-        universal_voucher_file_id = universal_voucher_file.id
 
-        vector_store = client.beta.vector_stores.create(
-            name="Knowledge about Adventures.bg",
-            file_ids=[
-                main_page_file_id, FAQ_file_id, about_us_file_id, my_voucher_file_id, universal_voucher_file_id
-            ])
+        file_batch = client.beta.vector_stores.file_batches.upload_and_poll(
+        vector_store_id=vector_store.id, files=file_streams
+        )
 
-        vector_store_id = vector_store.id
         print("Vector store created!")
+        print(file_batch.status)
+        print(file_batch.file_counts)
 
         assistant = client.beta.assistants.create(
             instructions=assistant_instructions,
@@ -45,11 +33,8 @@ def create_assistant(client):
             tools=[{
                 "type": "file_search"
             }],
-            tool_resources={
-                "file_search": {
-                    "vector_store_ids": [vector_store_id]
-                }
-            })
+            tool_resources={"file_search": {"vector_store_ids": [vector_store_id]}},
+        )
 
         with open(assistant_file_path, 'w') as file:
             IDs = {
