@@ -1,60 +1,75 @@
+<<<<<<< HEAD
 import openai
 import functions
 import time
+import re
+from typing_extensions import override
+from openai import AssistantEventHandler
+from prompts import assistant_instructions
 
-OPENAI_API_KEY="openai-key"
+OPENAI_API_KEY="openai-api"
 
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 assistant_id, vector_store_id = functions.create_assistant(
     client)
 
-print("Starting a new conversation...")
-thread = client.beta.threads.create(
-    messages=[{
-        "role": "user",
-        "content": "Starting a new conversation."
-    }],
-    tool_resources={"file_search": {
-        "vector_store_ids": [vector_store_id]
-    }})
-print(f"New thread created with ID: {thread.id}")
+class EventHandler(AssistantEventHandler):
+    def __init__(self):
+        super().__init__()
+        self.snapshot = {}
+        self.start_time = time.time()
+
+    @override
+    def on_text_created(self, text):
+        print("\n")
+        #print("\nAssistant: ", end="", flush=True)
+
+    @override
+    def on_text_delta(self, delta, snapshot):
+        print(delta.value, end="", flush=True)
+        self.snapshot = snapshot 
+        if self.start_time is not None and '.' in delta.value or '!' in delta.value:
+                    elapsed_time = time.time() - self.start_time
+                    print(f"\nTime to first sentence: {elapsed_time:.2f} seconds\n")
+                    self.start_time = None
+
+    @override
+    def on_message_done(self, message) -> None:
+        # print a citation to the file searched
+        message_content = message.content[0].text
+        annotations = message_content.annotations
+        citations = []
+        for index, annotation in enumerate(annotations):
+            message_content.value = message_content.value.replace(
+                annotation.text, f"[{index}]"
+            )
+            if file_citation := getattr(annotation, "file_citation", None):
+                cited_file = client.files.retrieve(file_citation.file_id)
+                citations.append(f"[{index}] {cited_file.filename}")
+
+        print(message_content.value)
+        print("\n".join(citations))
 
 
-def chat(user_input, thread_id = thread.id):
-  client.beta.threads.messages.create(thread_id=thread_id,
-                                      role="user",
-                                      content=user_input)
-  
-  run = client.beta.threads.runs.create(thread_id=thread_id,
-                                        assistant_id=assistant_id)
-  
-  while True:
-    run_status = client.beta.threads.runs.retrieve(thread_id=thread_id,
-                                                   run_id=run.id)
-    print(f"Run status: {run_status.status}")
-    if run_status.status == 'completed':
-      break
-    
-    elif run_status.status == 'failed':
-      error_response = {
-          'error': 'Run status failed',
-      }
-      return error_response, 400
-      
-    time.sleep(1)
 
-  messages = client.beta.threads.messages.list(thread_id=thread_id)
-  response = messages.data[0].content[0].text.value
+def chat():
+    thread = client.beta.threads.create()
+    while True:
+        user_message = input("\nUser: ")
+        start_time = time.time()
 
-  return (response)
+        message = client.beta.threads.messages.create(
+          thread_id=thread.id,
+          role="user",
+          content=user_message
+        )
 
-while True:
-  user_input = input()
-  start_time = time.time()
-  response = chat(user_input=user_input)
-  end_time = time.time()
-
-  time_taken = end_time - start_time
-  print(f"Response: {response}")
-  print(f"Time taken: {time_taken:.2f} seconds")
+        with client.beta.threads.runs.stream(
+          thread_id=thread.id,
+          assistant_id=assistant_id,
+          instructions=assistant_instructions,
+          event_handler=EventHandler(),
+        ) as stream:
+          stream.until_done()
+chat()
